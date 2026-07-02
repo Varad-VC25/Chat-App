@@ -1,9 +1,10 @@
 import { generateToken } from "../lib/utils.js";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
+import cloudinary from "../lib/cloudinary.js";
 
 // Signup a new user
-export const signupUser = async (req, res) => {
+export const signup = async (req, res) => {
     const { fullName, email, password, bio } = req.body;
 
     try {
@@ -35,24 +36,55 @@ export const signupUser = async (req, res) => {
 // Controller to login a user
 export const login = async (req, res) => {
     try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
+        const { email, password } = req.body;
 
-    const isPasswordCorrect = await bcrypt.compare(password, userData.password);
+        if (!email || !password) {
+            return res.json({ success: false, message: "Missing Details" });
+        }
 
-    if (!isPasswordCorrect) {
-        return res.json({success: false, message: "Invalid Credentials"});
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.json({ success: false, message: "Invalid Credentials" });
+        }
+
+        const isPasswordCorrect = await bcrypt.compare(password, user.password);
+
+        if (!isPasswordCorrect) {
+            return res.json({ success: false, message: "Invalid Credentials" });
+        }
+
+        const token = generateToken(user._id);
+
+        res.json({ success: true, userData: user, token, message: "Login successful" });
+    } catch (error) {
+        console.log(error.message);
+        res.json({ success: false, message: error.message });
     }
+}// Controller to check if user is authenticated
+export const checkAuth = async (req, res) => {
+    res.json({success: true, user: req.user})
+}
 
-    const token = generateToken(user._id);
+// Controller to update user profile details
+export const updateProfile = async (req, res) => {
+    try {
+        const { profilePic, bio, fullName } = req.body;
 
-    res.json({success: true, userData, token, message: "Login successful"})
+        const userId = req.user._id;
+        let updatedUser;
+
+        if (!profilePic) {
+            updatedUser = await User.findByIdAndUpdate(userId, { bio, fullName }, { new: true });
+        } else {
+
+            const upload = await cloudinary.uploader.upload(profilePic);
+
+            updatedUser = await User.findByIdAndUpdate(userId, { profilePic: upload.secure_url, bio, fullName }, { new: true });
+        }
+        res.json({success: true, user: updatedUser})
     } catch (error) {
         console.log(error.message);
         res.json({success: false, message: error.message})
-    }    
-}  
-// Controller to check if user is authenticated
-export const checkAuth = async (req, res) => {
-    res.json({success: true, user: req.user})
+    }
 }
