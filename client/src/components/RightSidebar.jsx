@@ -8,6 +8,7 @@ const RightSidebar = () => {
   const {selectedUser, messages} = useContext(ChatContext)
   const {logout, onlineUsers} = useContext(AuthContext)
   const [msgImages, setMsgImages] = useState([])
+  const [showImage, setShowImage] = useState(false)
 
   // Get all the images from the messages and set them to state
   useEffect(()=>{
@@ -20,7 +21,7 @@ const RightSidebar = () => {
     <div className={`bg-[#8185B2]/10 text-white w-full relative overflow-y-scroll ${selectedUser ? "max-md:hidden" : ""}`}>
       
       <div className='pt-16 flex flex-col items-center gap-2 text-xs font-light mx-auto'>
-        <img src={selectedUser?.profilePic || assets.avatar_icon} alt="" className='w-20 aspect-[1/1] rounded-full'/>
+        <img src={selectedUser?.profilePic || assets.avatar_icon} alt="" onClick={()=> setShowImage(true)} className='w-20 aspect-[1/1] rounded-full object-cover cursor-pointer'/>
         <h1 className='px-10 text-xl font-medium mx-auto flex items-center gap-2'>
             {onlineUsers.includes(selectedUser._id) && <p className='w-2 h-2 rounded-full bg-green-500'></p>}
             {selectedUser.fullName}
@@ -40,6 +41,11 @@ const RightSidebar = () => {
             ))}
         </div>
       </div>
+
+      {showImage && (<div onClick={() => setShowImage(false)} className='fixed inset-0 bg-black/80 flex items-center justify-center z-50'>
+      <img src={selectedUser?.profilePic || assets.avatar_icon} alt="" className='max-w-[90%] max-h-[90%] rounded-lg'/>
+      </div>
+      )}
 
       <button onClick={()=> logout()} className='absolute bottom-5 left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-purple-400 to-violet-600 text-white border-none px-20 py-2 rounded-full text-sm cursor-pointer'>
       Logout
