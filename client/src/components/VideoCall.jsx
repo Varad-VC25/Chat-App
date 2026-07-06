@@ -5,6 +5,7 @@ const VideoCall = ({
   myVideo,
   userVideo,
   callAccepted,
+  hasRemoteStream,
   endCall,
 }) => {
 
@@ -13,10 +14,11 @@ const VideoCall = ({
     <div className="absolute inset-0 bg-black/90 z-40 flex flex-col items-center justify-center p-6">
 
       {/* VIDEOS */}
-      {/* Pre-call: show only local video centered. After accepted: show both side-by-side. */}
+      {/* Pre-call: show only local video centered. When remote stream exists: show both side-by-side. */}
       <div
-        className={`items-center justify-center gap-6 ${callAccepted ? 'grid grid-cols-2' : 'flex flex-col'}`}
+        className={`items-center justify-center gap-6 ${hasRemoteStream ? 'grid grid-cols-2' : 'flex flex-col'}`}
       >
+
 
         {/* MY VIDEO */}
         <div className="flex flex-col items-center">
@@ -37,7 +39,7 @@ const VideoCall = ({
         </div>
 
         {/* REMOTE VIDEO */}
-        {callAccepted && (
+        {(callAccepted || hasRemoteStream) && (
 
           <div className="flex flex-col items-center">
 
@@ -50,7 +52,7 @@ const VideoCall = ({
             />
 
             <p className="text-white mt-2">
-              Remote User
+              {callerName || "Remote User"}
             </p>
 
           </div>
