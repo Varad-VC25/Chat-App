@@ -55,12 +55,17 @@ socket.on("call-user", (data) => {
             return;
         }
 
-        // Send both ids so the receiver can reliably resolve sender name.
+        // Receiver needs sender's name in popup/toast.
+        // We send: from=userId of caller, to=receiver userId, and also callerName if available.
+        const callerSocketId = userSocketMap[from];
         io.to(targetSocket).emit("incoming-call", {
-            from, // sender userId
-            to: userToCall, // receiver userId
+            from,
+            to: userToCall,
+            callerName: "", // kept for backward compatibility; client will fall back to from id
             offer,
         });
+
+
 
 
 

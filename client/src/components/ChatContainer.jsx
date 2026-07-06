@@ -163,25 +163,19 @@ const prepareStream = async () => {
   // =========================
   // Incoming Call
   // =========================
-  const handleIncomingCall = ({ from, offer, to }) => {
+  const handleIncomingCall = ({ from, offer, to, callerName }) => {
 
     console.log("incoming-call", from, offer, to);
 
-
-
-
-
-
-    // Hard requirement: receiver should show sender's name in both popup + toast,
-    // regardless of which chat is currently selected.
-    // We only have local user data for `selectedUser`, so when `selectedUser` is not the sender,
-    // we fall back to `from` to avoid showing the wrong name.
+    // Hard requirement: receiver should show sender's name in both popup + toast (Edge/Chrome).
+    // Priority: callerName (if provided by server) -> selectedUser match -> from fallback.
     const senderName =
-      selectedUser && String(selectedUser._id) === String(from)
-        ? selectedUser.fullName
-        : callerName && callerName !== ""
-          ? callerName
+      callerName && callerName !== ""
+        ? callerName
+        : selectedUser && String(selectedUser._id) === String(from)
+          ? selectedUser.fullName
           : (from ? "Incoming" : "Unknown");
+
 
 
     setReceivingCall(true);
