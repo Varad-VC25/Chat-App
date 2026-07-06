@@ -87,7 +87,9 @@ export const AuthProvider = ({ children }) => {
             auth: {
                 userId: userData._id.toString(),
             },
-            transports: ["websocket"],
+            transports: ["polling", "websocket"],
+            forceNew: true,
+            reconnection: true,
             autoConnect: true,
         });
         setSocket(newSocket);

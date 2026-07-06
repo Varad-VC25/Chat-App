@@ -20,6 +20,7 @@ app.use(
       "http://localhost:5173",
       "https://chat-app-frontend-six-ochre-11.vercel.app",
     ],
+    methods: ["GET", "POST"],
     credentials: true,
   })
 );
