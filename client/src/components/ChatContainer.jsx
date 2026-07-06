@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from 'react'
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import assets from '../assets/assets'
 import { formatMessageTime } from '../lib/utils'
 import { ChatContext } from '../../context/ChatContext'
@@ -17,32 +17,42 @@ const ChatContainer = () => {
 
   const [input, setInput] = useState('')
 
-  const [stream, setStream] = useState(null)
+  // UI state
   const [receivingCall, setReceivingCall] = useState(false)
   const [caller, setCaller] = useState('')
   const [callerName, setCallerName] = useState('')
   const [callerSignal, setCallerSignal] = useState(null)
-
-
   const [callAccepted, setCallAccepted] = useState(false)
   const [callStarted, setCallStarted] = useState(false)
 
+  // Video elements
   const myVideo = useRef(null)
   const userVideo = useRef(null)
-  const connectionRef = useRef(null)
 
+  // WebRTC refs (StrictMode-safe, no re-renders)
+  const pcRef = useRef(null)
+  const localStreamRef = useRef(null)
+  const remoteStreamRef = useRef(null)
+
+  // Remote stream state only for rendering guards (minimal)
   const [remoteStream, setRemoteStream] = useState(null)
+
+  // Call lifecycle guards
+  const activeCallIdRef = useRef(null)
+  const phaseRef = useRef('idle') // idle | calling | ringing | connected | ending
+  const isStartInFlightRef = useRef(false)
   const pendingAcceptedSignalRef = useRef(null)
+
 
   const prepareStream = async () => {
     // reuse existing local stream
-    if (stream) {
-      stream.getTracks().forEach((t) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => {
         t.enabled = true
       })
 
-      if (myVideo.current) myVideo.current.srcObject = stream
-      return stream
+      if (myVideo.current) myVideo.current.srcObject = localStreamRef.current
+      return localStreamRef.current
     }
 
     try {
@@ -51,7 +61,7 @@ const ChatContainer = () => {
         audio: true,
       })
 
-      setStream(mediaStream)
+      localStreamRef.current = mediaStream
       if (myVideo.current) myVideo.current.srcObject = mediaStream
 
       return mediaStream
@@ -62,29 +72,37 @@ const ChatContainer = () => {
     }
   }
 
-  const cleanupCall = () => {
-    if (stream) {
-      stream.getTracks().forEach((t) => {
-        try {
-          t.stop()
-        } catch {}
-      })
-    }
 
-    if (connectionRef.current) {
+const cleanupCall = () => {
+    // stop local tracks
+    if (localStreamRef.current) {
       try {
-        connectionRef.current.ontrack = null
-        connectionRef.current.onicecandidate = null
-        connectionRef.current.close()
+        localStreamRef.current.getTracks().forEach((t) => t.stop())
       } catch {}
-      connectionRef.current = null
+      localStreamRef.current = null
     }
 
+    // close peer connection
+    if (pcRef.current) {
+      try {
+        pcRef.current.ontrack = null
+        pcRef.current.onicecandidate = null
+        pcRef.current.onconnectionstatechange = null
+        pcRef.current.close()
+      } catch {}
+      pcRef.current = null
+    }
+
+    // detach streams from video elements
     if (myVideo.current) myVideo.current.srcObject = null
     if (userVideo.current) userVideo.current.srcObject = null
 
+    remoteStreamRef.current = null
     setRemoteStream(null)
-    setStream(null)
+
+    pendingAcceptedSignalRef.current = null
+    activeCallIdRef.current = null
+    phaseRef.current = 'idle'
 
     setCallAccepted(false)
     setCallStarted(false)
@@ -93,6 +111,7 @@ const ChatContainer = () => {
     setCaller('')
     setCallerSignal(null)
   }
+
 
   useEffect(() => {
     if (selectedUser) getMessages(selectedUser._id)
@@ -114,13 +133,16 @@ const ChatContainer = () => {
 
     const handleIceCandidate = async ({ candidate }) => {
       try {
-        if (candidate && connectionRef.current) {
-          await connectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
-        }
+        if (!candidate) return
+        if (!pcRef.current) return
+        // Ignore ICE if call is already ended
+        if (!activeCallIdRef.current) return
+        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
       } catch (err) {
         console.log('ICE candidate error', err)
       }
     }
+
 
     const handleIncomingCall = ({ from, offer, callerName }) => {
       const senderName = callerName?.trim() || 'Unknown User'
@@ -139,20 +161,24 @@ const ChatContainer = () => {
         return
       }
 
-      if (!connectionRef.current) {
+      if (!pcRef.current) {
         pendingAcceptedSignalRef.current = answer
         return
       }
+
+      // StrictMode-safe: ignore if call already ended/changed
+      if (!activeCallIdRef.current) return
 
       setCallAccepted(true)
       setCallStarted(true)
       setReceivingCall(false)
 
       try {
-        await connectionRef.current.setRemoteDescription(answer)
+        await pcRef.current.setRemoteDescription(answer)
       } catch (e) {
         console.warn('Failed to set remote description from buffered answer', e)
       }
+
     }
 
     const handleCallError = (data) => {
@@ -181,12 +207,16 @@ const ChatContainer = () => {
     }
   }, [socket])
 
-  // bind remote stream to video element after it mounts
+  // bind remote stream to video element after it mounts.
+  // NOTE: we intentionally do NOT call play() here.
+  // VideoCall.jsx owns autoplay attempts to avoid duplicate play() calls.
   useEffect(() => {
     if (userVideo.current && remoteStream) {
-      userVideo.current.srcObject = remoteStream
+      userVideo.current.srcObject = remoteStream;
     }
   }, [remoteStream])
+
+
 
   const emitWhenConnected = (event, payload) => {
     if (!socket) return
@@ -206,6 +236,14 @@ const ChatContainer = () => {
   }
 
   const startCall = async (id) => {
+    console.log('[Call] startCall invoked', {
+      id,
+      callStarted,
+      selectedUserId: selectedUser?._id,
+      authUserId: authUser?._id,
+      socketConnected: socket?.connected,
+    })
+
     if (!socket) {
       toast.error('Connecting to call server. Please wait a moment.')
       return
@@ -216,15 +254,23 @@ const ChatContainer = () => {
     if (!authUser?._id) return toast.error('Missing auth user.')
 
     const currentStream = await prepareStream()
+    console.log('[Call] local stream ready', {
+      hasStream: !!currentStream,
+      tracks: currentStream?.getTracks?.().map((t) => `${t.kind}:${t.readyState}`),
+    })
     if (!currentStream) {
       toast.error('Failed to access camera/microphone')
       return
     }
 
-    if (connectionRef.current) {
-      connectionRef.current.close()
-      connectionRef.current = null
+
+    if (pcRef.current) {
+      try {
+        pcRef.current.close()
+      } catch {}
+      pcRef.current = null
     }
+
 
     const pc = await createPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -240,15 +286,31 @@ const ChatContainer = () => {
     }
 
     pc.ontrack = (event) => {
+      console.log("[WebRTC] caller pc.ontrack:", {
+        kind: event.track?.kind,
+        readyState: event.track?.readyState,
+        id: event.track?.id,
+        streams: event.streams?.length,
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+        trackEnabled: event.track?.enabled,
+      })
+
       const [nextRemoteStream] = event.streams
-      if (nextRemoteStream) setRemoteStream(nextRemoteStream)
+      console.log("[WebRTC] caller ontrack streams[0] exists:", !!nextRemoteStream)
+      if (nextRemoteStream) {
+        setRemoteStream(nextRemoteStream)
+      }
     }
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
 
-    connectionRef.current = pc
+
+
+    pcRef.current = pc
 
     setReceivingCall(false)
+
     setCallStarted(true)
     setCallAccepted(false)
 
@@ -290,9 +352,16 @@ const ChatContainer = () => {
   }
 
   const answerCall = async () => {
-    if (!socket) return toast.error('Connecting to call server. Please wait a moment.')
+    if (!socket)
+      return toast.error('Connecting to call server. Please wait a moment.')
     if (!caller) return toast.error('Caller missing. Cannot accept call.')
-    if (!callerSignal) return toast.error('Caller offer not received yet. Please wait.')
+    if (!callerSignal)
+      return toast.error('Caller offer not received yet. Please wait.')
+
+    console.log('[WebRTC] answerCall start', {
+      caller,
+      hasCallerSignal: !!callerSignal,
+    })
 
     const currentStream = await prepareStream()
     if (!currentStream) return toast.error('Failed to access camera/microphone')
@@ -301,16 +370,39 @@ const ChatContainer = () => {
     setReceivingCall(false)
     setCallAccepted(true)
 
-    if (connectionRef.current) {
+    if (pcRef.current) {
       try {
-        connectionRef.current.close?.()
+        pcRef.current.close?.()
       } catch {}
-      connectionRef.current = null
+      pcRef.current = null
     }
 
+
     const pc = await createPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        // placeholder TURN; you should replace with your own TURN for production
+        {
+          urls: 'turn:YOUR_TURN_HOST:3478',
+          username: 'YOUR_TURN_USER',
+          credential: 'YOUR_TURN_PASS',
+        },
+      ],
     })
+
+    pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] callee connectionState:', pc.connectionState)
+      if (pc.connectionState === 'failed') toast.error('Call connection failed')
+    }
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] callee iceConnectionState:', pc.iceConnectionState)
+    }
+
+    pc.onicegatheringstatechange = () => {
+      console.log('[WebRTC] callee iceGatheringState:', pc.iceGatheringState)
+    }
+
 
     pc.onicecandidate = (event) => {
       if (!event.candidate) return
@@ -328,7 +420,8 @@ const ChatContainer = () => {
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
 
-    connectionRef.current = pc
+    pcRef.current = pc
+
 
     await pc.setRemoteDescription(callerSignal)
 
