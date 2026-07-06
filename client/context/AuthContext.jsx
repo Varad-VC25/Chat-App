@@ -94,7 +94,6 @@ export const AuthProvider = ({ children }) => {
 
         newSocket.on("connect", () => {
             console.log("Socket connected", newSocket.id, userData._id);
-            setOnlineUsers(current => current);
         });
 
         newSocket.on("connect_error", (error) => {
