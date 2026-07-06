@@ -7,6 +7,7 @@ const VideoCall = ({
   callAccepted,
   hasRemoteStream,
   endCall,
+  callerName,
 }) => {
 
   return (

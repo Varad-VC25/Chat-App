@@ -22,6 +22,8 @@ const ChatContainer = () => {
   const [caller, setCaller] = useState('')
   const [callerName, setCallerName] = useState('')
   const [callerSignal, setCallerSignal] = useState(null)
+
+
   const [callAccepted, setCallAccepted] = useState(false)
   const [callStarted, setCallStarted] = useState(false)
 
@@ -461,6 +463,7 @@ const ChatContainer = () => {
           callAccepted={callAccepted}
           hasRemoteStream={!!remoteStream}
           endCall={endCall}
+          callerName={callerName}
         />
       )}
 
