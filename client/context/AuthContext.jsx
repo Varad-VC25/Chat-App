@@ -75,36 +75,44 @@ export const AuthProvider = ({ children }) => {
     }
 
     // Connect socket function to handle socket connection and online users updates
-    const connectSocket = (userData) =>{
-        if(!userData) return;
-        
-        // Disconnect existing socket if any
-        if(socket) {
-            socket.disconnect();
-        }
-        
-        const newSocket = io(backendUrl, {
-            auth: {
-                userId: userData._id.toString(),
-            },
-            transports: ["polling", "websocket"],
-            reconnection: true,
-        });
-        setSocket(newSocket);
+const connectSocket = (userData) => {
+    if (!userData) return;
 
-        newSocket.on("connect", () => {
-            console.log("Socket connected", newSocket.id, userData._id);
-        });
-
-        newSocket.on("connect_error", (error) => {
-            console.error("Socket connect_error", error);
-            toast.error(`Socket connection failed: ${error.message}`);
-        });
-
-        newSocket.on("getOnlineUsers", (userIds)=>{
-            setOnlineUsers(userIds.map((id) => String(id)));
-        })
+    // Disconnect existing socket if any
+    if (socket) {
+        socket.disconnect();
     }
+
+    const newSocket = io(backendUrl, {
+        auth: {
+            userId: userData._id.toString(),
+        },
+        transports: ["polling", "websocket"],
+        reconnection: true,
+    });
+
+    setSocket(newSocket);
+
+    // ✅ CONNECT
+    newSocket.on("connect", () => {
+        console.log("✅ Socket connected", newSocket.id, userData._id);
+    });
+
+    // ✅ DISCONNECT
+    newSocket.on("disconnect", () => {
+        console.log("❌ Socket disconnected");
+    });
+
+    // ✅ CONNECTION ERROR
+    newSocket.on("connect_error", (error) => {
+        console.error("Socket connect_error", error.message);
+    });
+
+    // ✅ ONLINE USERS
+    newSocket.on("getOnlineUsers", (userIds) => {
+        setOnlineUsers(userIds.map((id) => String(id)));
+    });
+};
 
     useEffect(()=>{
         if(token){
