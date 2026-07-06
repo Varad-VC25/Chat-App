@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import { useEffect } from "react";
 import {io} from "socket.io-client";
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL;
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 axios.defaults.baseURL = backendUrl;
 
 export const AuthContext = createContext();
@@ -79,20 +79,30 @@ export const AuthProvider = ({ children }) => {
         if(!userData) return;
         
         // Disconnect existing socket if any
-        if(socket?.connected) {
+        if(socket) {
             socket.disconnect();
         }
         
         const newSocket = io(backendUrl, {
-            query: {
+            auth: {
                 userId: userData._id.toString(),
-            }
+            },
+            autoConnect: true,
         });
-        newSocket.connect();
         setSocket(newSocket);
 
+        newSocket.on("connect", () => {
+            console.log("Socket connected", newSocket.id, userData._id);
+            setOnlineUsers(current => current);
+        });
+
+        newSocket.on("connect_error", (error) => {
+            console.error("Socket connect_error", error);
+            toast.error(`Socket connection failed: ${error.message}`);
+        });
+
         newSocket.on("getOnlineUsers", (userIds)=>{
-            setOnlineUsers(userIds);
+            setOnlineUsers(userIds.map((id) => String(id)));
         })
     }
 

@@ -23,7 +23,7 @@ const Sidebar = () => {
 
   return (
     <div className={`bg-[#8185B2]/10 h-full p-5 rounded-r-xl overflow-y-scroll
-    text-white ${selectedUser ? "max-md-hidden" : ''}`}>
+    text-white ${selectedUser ? "max-md:hidden" : ''}`}>
       <div className='pb-5'>
         <div className='flex justify-between items-center'>
             <img src={assets.logo} alt="logo" className='max-w-40'/>
@@ -56,7 +56,7 @@ const Sidebar = () => {
                 <div className='flex flex-col leading-5'>
                     <p>{user.fullName}</p>
                     {
-                        onlineUsers.includes(user._id)
+                        onlineUsers.includes(String(user._id))
                         ? <span className='text-green-400 text-xs'>Online</span>
                         : <span className='text-neutral-400 text-xs'>Offline</span>
                     }

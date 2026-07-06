@@ -21,13 +21,110 @@ export const userSocketMap = {}; // { userId: socketId }
 
 // Socket.IO connection handler
 io.on("connection", (socket) => {
-    const userId = socket.handshake.query.userId;
+    const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
     console.log("User Connected", userId);
 
-    if(userId) userSocketMap[userId] = socket.id;
+    if (userId) {
+        userSocketMap[userId] = socket.id;
+    }
 
     // Emit online users to all connected clients
     io.emit("getOnlineUsers", Object.keys(userSocketMap).map(id => id.toString()));
+
+
+// ---------------- CALLING FEATURE ---------------- //
+
+// CALL USER
+socket.on("call-user", (data) => {
+    try {
+        const { userToCall, from, offer } = data;
+
+        if (!userToCall || !from || !offer) {
+            socket.emit("call-error", {
+                message: "Invalid call data",
+            });
+            return;
+        }
+
+        const targetSocket = userSocketMap[userToCall];
+
+        if (!targetSocket) {
+            socket.emit("call-error", {
+                message: "User is offline",
+            });
+            return;
+        }
+
+        // Send both ids so the receiver can reliably resolve sender name.
+        io.to(targetSocket).emit("incoming-call", {
+            from, // sender userId
+            to: userToCall, // receiver userId
+            offer,
+        });
+
+
+
+
+
+    } catch (err) {
+        console.log("call-user error", err);
+    }
+});
+
+
+// ANSWER CALL
+socket.on("answer-call", (data) => {
+    try {
+        const { to, answer } = data;
+
+        const targetSocket = userSocketMap[to];
+
+        if (!targetSocket) return;
+
+        io.to(targetSocket).emit("call-accepted", {
+            answer,
+        });
+
+    } catch (err) {
+        console.log("answer-call error", err);
+    }
+});
+
+
+// ICE CANDIDATES
+socket.on("ice-candidate", (data) => {
+    try {
+        const { to, candidate, from } = data;
+
+        const targetSocket = userSocketMap[to];
+
+        if (!targetSocket) return;
+
+        io.to(targetSocket).emit("ice-candidate", {
+            candidate,
+            from,
+        });
+
+    } catch (err) {
+        console.log("ice-candidate error", err);
+    }
+});
+
+
+// END CALL
+socket.on("end-call", ({ to, declined }) => {
+    try {
+        const targetSocket = userSocketMap[to];
+
+        if (!targetSocket) return;
+
+        io.to(targetSocket).emit("end-call", { declined });
+
+    } catch (err) {
+        console.log("end-call error", err);
+    }
+});
+
 
     socket.on("disconnect", () => {
         console.log("User Disconnected", userId);

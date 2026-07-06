@@ -23,7 +23,7 @@ const RightSidebar = () => {
       <div className='pt-16 flex flex-col items-center gap-2 text-xs font-light mx-auto'>
         <img src={selectedUser?.profilePic || assets.avatar_icon} alt="" onClick={()=> setShowImage(true)} className='w-20 aspect-[1/1] rounded-full object-cover cursor-pointer'/>
         <h1 className='px-10 text-xl font-medium mx-auto flex items-center gap-2'>
-            {onlineUsers.includes(selectedUser._id) && <p className='w-2 h-2 rounded-full bg-green-500'></p>}
+            {onlineUsers.includes(String(selectedUser._id)) && <p className='w-2 h-2 rounded-full bg-green-500'></p>}
             {selectedUser.fullName}
             </h1>
             <p className='px-10 mx-auto'>{selectedUser.bio}</p>

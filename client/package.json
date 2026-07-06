@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -12,11 +12,15 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.2",
     "axios": "^1.18.1",
+    "buffer": "^6.0.3",
+    "process": "^0.11.10",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.18.0",
+    "simple-peer": "^9.11.1",
     "socket.io-client": "^4.8.3",
+    "stream-browserify": "^3.0.0",
     "tailwindcss": "^4.3.2"
   },
   "devDependencies": {
