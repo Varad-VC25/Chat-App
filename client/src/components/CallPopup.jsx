@@ -16,7 +16,7 @@ const CallPopup = ({
       <div className="bg-[#1f1f1f] p-6 rounded-2xl flex flex-col items-center gap-4 w-[320px] text-white shadow-lg">
 
         <img
-          src="https://cdn-icons-png.flaticon.com/512/724/724664.png"
+          src="/call.svg"
           alt=""
           className="w-16"
         />

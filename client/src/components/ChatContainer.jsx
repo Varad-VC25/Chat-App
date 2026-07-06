@@ -163,28 +163,25 @@ const prepareStream = async () => {
   // =========================
   // Incoming Call
   // =========================
-  const handleIncomingCall = ({ from, offer, to, callerName }) => {
+  const handleIncomingCall = ({
+  from,
+  offer,
+  to,
+  callerName,
+}) => {
 
-    console.log("incoming-call", from, offer, to);
+  console.log("incoming-call", from, offer, to);
 
-    // Hard requirement: receiver should show sender's name in both popup + toast (Edge/Chrome).
-    // Priority: callerName (if provided by server) -> selectedUser match -> from fallback.
-    const senderName =
-      callerName && callerName !== ""
-        ? callerName
-        : selectedUser && String(selectedUser._id) === String(from)
-          ? selectedUser.fullName
-          : (from ? "Incoming" : "Unknown");
+  const senderName =
+    callerName?.trim() || "Unknown User";
 
+  setReceivingCall(true);
+  setCaller(from);
+  setCallerName(senderName);
+  setCallerSignal(offer);
 
-
-    setReceivingCall(true);
-    setCaller(from);
-    setCallerName(senderName);
-    setCallerSignal(offer);
-
-    toast.success(`Incoming call from ${senderName}..!!`);
-  };
+  toast.success(`Incoming call from ${senderName}..!!`);
+};
 
 
   // =========================
@@ -363,6 +360,7 @@ try {
       emitWhenConnected('call-user', {
         userToCall: id,
         from: authUser._id,
+        callerName: authUser.fullName,
         offer: pc.localDescription,
       });
 

@@ -36,44 +36,35 @@ io.on("connection", (socket) => {
 
 // CALL USER
 socket.on("call-user", (data) => {
-    try {
-        const { userToCall, from, offer } = data;
+  try {
+    const { userToCall, from, offer, callerName } = data;
 
-        if (!userToCall || !from || !offer) {
-            socket.emit("call-error", {
-                message: "Invalid call data",
-            });
-            return;
-        }
-
-        const targetSocket = userSocketMap[userToCall];
-
-        if (!targetSocket) {
-            socket.emit("call-error", {
-                message: "User is offline",
-            });
-            return;
-        }
-
-        // Receiver needs sender's name in popup/toast.
-        // We send: from=userId of caller, to=receiver userId, and also callerName if available.
-        const callerSocketId = userSocketMap[from];
-        io.to(targetSocket).emit("incoming-call", {
-            from,
-            to: userToCall,
-            callerName: "", // kept for backward compatibility; client will fall back to from id
-            offer,
-        });
-
-
-
-
-
-
-
-    } catch (err) {
-        console.log("call-user error", err);
+    if (!userToCall || !from || !offer) {
+      socket.emit("call-error", {
+        message: "Invalid call data",
+      });
+      return;
     }
+
+    const targetSocket = userSocketMap[userToCall];
+
+    if (!targetSocket) {
+      socket.emit("call-error", {
+        message: "User is offline",
+      });
+      return;
+    }
+
+    io.to(targetSocket).emit("incoming-call", {
+      from,
+      to: userToCall,
+      callerName,
+      offer,
+    });
+
+  } catch (err) {
+    console.log("call-user error", err);
+  }
 });
 
 
@@ -152,7 +143,11 @@ app.use("/api/messages", messageRouter);
 // Connect to MongoDB
 await connectDB();
 
-
+if(process.env.NODE_ENV !== "production"){
 const PORT = process.env.PORT || 5000;
 // Start the server
 server.listen(PORT, () => console.log("Server is running on PORT: " + PORT));
+}
+
+// Export server for Vercel
+export default server;
