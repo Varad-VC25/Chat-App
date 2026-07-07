@@ -130,7 +130,9 @@ const cleanupCall = () => {
 
     myVideo.current.srcObject = localStreamRef.current;
 
-    myVideo.current.play().catch(console.error);
+    requestAnimationFrame(() => {
+    myVideo.current?.play().catch(console.error);
+});
   }
 }, [callStarted]);
 
@@ -265,12 +267,7 @@ const cleanupCall = () => {
   // bind remote stream to video element after it mounts.
   // NOTE: we intentionally do NOT call play() here.
   // VideoCall.jsx owns autoplay attempts to avoid duplicate play() calls.
-  useEffect(() => {
-    if (userVideo.current && remoteStream) {
-      userVideo.current.srcObject = remoteStream;
-    }
-  }, [remoteStream])
-
+  
 
 
   const emitWhenConnected = (event, payload) => {
@@ -483,9 +480,13 @@ const cleanupCall = () => {
   setRemoteStream(stream);
 
   if (userVideo.current) {
+    if (userVideo.current.srcObject !== stream) {
     userVideo.current.srcObject = stream;
+}
 
-    userVideo.current.play().catch(console.error);
+requestAnimationFrame(() => {
+    userVideo.current?.play().catch(console.error);
+});
   }
 }
 
