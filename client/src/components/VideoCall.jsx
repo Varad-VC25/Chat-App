@@ -31,7 +31,7 @@ const VideoCall = ({
           <p className="text-white mt-2">You</p>
         </div>
 
-        {callAccepted && (
+        {hasRemoteStream && (
           <div className="flex flex-col items-center">
             <video
               playsInline

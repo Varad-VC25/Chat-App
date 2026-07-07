@@ -124,33 +124,41 @@ const cleanupCall = () => {
     setCallerSignal(null)
   }
 
-  useEffect(() => {
-  if (callStarted && myVideo.current && localStreamRef.current) {
-    console.log("Attaching local stream");
+useEffect(() => {
+  if (!myVideo.current || !localStreamRef.current) return;
 
-    myVideo.current.srcObject = localStreamRef.current;
+  if (myVideo.current.srcObject === localStreamRef.current) return;
 
-    requestAnimationFrame(() => {
-    myVideo.current?.play().catch(console.error);
-});
-  }
+  console.log("Attaching local stream");
+
+  myVideo.current.srcObject = localStreamRef.current;
+
+  requestAnimationFrame(async () => {
+    try {
+      await myVideo.current.play();
+    } catch (err) {
+      console.log("local play skipped");
+    }
+  });
 }, [callStarted]);
 
 useEffect(() => {
-  if (
-    userVideo.current &&
-    remoteStream
-  ) {
-    console.log("Attaching remote stream AFTER render");
+  if (!userVideo.current || !remoteStream) return;
 
-    userVideo.current.srcObject = remoteStream;
+  // Prevent duplicate assignment
+  if (userVideo.current.srcObject === remoteStream) return;
 
-    requestAnimationFrame(() => {
-      userVideo.current
-        ?.play()
-        .catch(console.error);
-    });
-  }
+  console.log("Attaching remote stream AFTER render");
+
+  userVideo.current.srcObject = remoteStream;
+
+  requestAnimationFrame(async () => {
+    try {
+      await userVideo.current.play();
+    } catch (err) {
+      console.log("play skipped");
+    }
+  });
 }, [remoteStream]);
 
   useEffect(() => {
