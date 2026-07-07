@@ -62,7 +62,11 @@ const ChatContainer = () => {
 
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: {
+        facingMode: "user",
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+        },
         audio: true,
       })
 
@@ -384,7 +388,32 @@ useEffect(() => {
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
 
+const senders = pc.getSenders();
 
+const videoSender = senders.find(
+  (s) => s.track && s.track.kind === "video"
+);
+
+if (videoSender) {
+  const transceiver = pc
+    .getTransceivers()
+    .find((t) => t.sender === videoSender);
+
+  if (transceiver) {
+    const capabilities =
+      RTCRtpSender.getCapabilities("video");
+
+    const preferredCodecs = capabilities.codecs.filter(
+  (c) =>
+    c.mimeType === "video/VP8" ||
+    c.mimeType.includes("rtx")
+);
+
+if (preferredCodecs.length) {
+  transceiver.setCodecPreferences(preferredCodecs);
+}
+  }
+}
 
     pcRef.current = pc
 
@@ -511,6 +540,33 @@ requestAnimationFrame(() => {
 }
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
+
+    const senders = pc.getSenders();
+
+const videoSender = senders.find(
+  (s) => s.track && s.track.kind === "video"
+);
+
+if (videoSender) {
+  const transceiver = pc
+    .getTransceivers()
+    .find((t) => t.sender === videoSender);
+
+  if (transceiver) {
+    const capabilities =
+      RTCRtpSender.getCapabilities("video");
+
+const preferredCodecs = capabilities.codecs.filter(
+  (c) =>
+    c.mimeType === "video/VP8" ||
+    c.mimeType.includes("rtx")
+);
+
+if (preferredCodecs.length) {
+  transceiver.setCodecPreferences(preferredCodecs);
+}
+  }
+}
 
     pcRef.current = pc
 
