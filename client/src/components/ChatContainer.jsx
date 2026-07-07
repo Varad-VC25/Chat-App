@@ -377,13 +377,22 @@ useEffect(() => {
         iceState: pc.iceConnectionState,
       })
 
-     if (nextRemoteStream) {
-    remoteStreamRef.current = nextRemoteStream;
+      if (nextRemoteStream) {
+        remoteStreamRef.current = nextRemoteStream
+        setRemoteStream(nextRemoteStream)
 
-    setRemoteStream(nextRemoteStream);
+        // Bind immediately so autoplay timing is consistent across devices.
+        if (userVideo.current && userVideo.current.srcObject !== nextRemoteStream) {
+          userVideo.current.srcObject = nextRemoteStream
+        }
 
-   }
+        requestAnimationFrame(() => {
+          if (!userVideo.current) return
+          userVideo.current.play().catch(() => {})
+        })
+      }
     }
+
 
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
