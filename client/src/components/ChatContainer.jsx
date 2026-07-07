@@ -136,6 +136,23 @@ const cleanupCall = () => {
   }
 }, [callStarted]);
 
+useEffect(() => {
+  if (
+    userVideo.current &&
+    remoteStream
+  ) {
+    console.log("Attaching remote stream AFTER render");
+
+    userVideo.current.srcObject = remoteStream;
+
+    requestAnimationFrame(() => {
+      userVideo.current
+        ?.play()
+        .catch(console.error);
+    });
+  }
+}, [remoteStream]);
+
   useEffect(() => {
     if (selectedUser) getMessages(selectedUser._id)
   }, [selectedUser, getMessages])
@@ -353,12 +370,7 @@ const cleanupCall = () => {
 
     setRemoteStream(nextRemoteStream);
 
-    if (userVideo.current) {
-        userVideo.current.srcObject = nextRemoteStream;
-
-        userVideo.current.play().catch(console.error);
-    }
-}
+   }
     }
 
 
