@@ -127,11 +127,11 @@ const cleanupCall = () => {
 useEffect(() => {
   if (!myVideo.current || !localStreamRef.current) return;
 
-  if (myVideo.current.srcObject === localStreamRef.current) return;
-
   console.log("Attaching local stream");
 
-  myVideo.current.srcObject = localStreamRef.current;
+  if (myVideo.current.srcObject !== localStreamRef.current) {
+    myVideo.current.srcObject = localStreamRef.current;
+  }
 
   requestAnimationFrame(async () => {
     try {
@@ -140,7 +140,7 @@ useEffect(() => {
       console.log("local play skipped");
     }
   });
-}, [callStarted]);
+}, [callStarted, receivingCall]);
 
 useEffect(() => {
   if (!userVideo.current || !remoteStream) return;
