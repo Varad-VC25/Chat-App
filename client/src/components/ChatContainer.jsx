@@ -377,21 +377,22 @@ useEffect(() => {
         iceState: pc.iceConnectionState,
       })
 
-      if (nextRemoteStream) {
-        remoteStreamRef.current = nextRemoteStream
-        setRemoteStream(nextRemoteStream)
+      if (!nextRemoteStream) return
 
-        // Bind immediately so autoplay timing is consistent across devices.
-        if (userVideo.current && userVideo.current.srcObject !== nextRemoteStream) {
-          userVideo.current.srcObject = nextRemoteStream
-        }
+      remoteStreamRef.current = nextRemoteStream
+      setRemoteStream(nextRemoteStream)
 
-        requestAnimationFrame(() => {
-          if (!userVideo.current) return
-          userVideo.current.play().catch(() => {})
-        })
+      // Bind immediately so autoplay timing is consistent across devices.
+      if (userVideo.current && userVideo.current.srcObject !== nextRemoteStream) {
+        userVideo.current.srcObject = nextRemoteStream
       }
+
+      requestAnimationFrame(() => {
+        if (!userVideo.current) return
+        userVideo.current.play().catch(() => {})
+      })
     }
+
 
 
 
