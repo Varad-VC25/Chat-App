@@ -43,6 +43,11 @@ const ChatContainer = () => {
   const isStartInFlightRef = useRef(false)
   const pendingAcceptedSignalRef = useRef(null)
 
+  // WebRTC robustness refs
+  const pendingIceCandidatesRef = useRef([])
+  const activePeerIdRef = useRef(null)
+
+
 
   const prepareStream = async () => {
     // reuse existing local stream
@@ -62,7 +67,14 @@ const ChatContainer = () => {
       })
 
       localStreamRef.current = mediaStream
-      if (myVideo.current) myVideo.current.srcObject = mediaStream
+
+console.log("Local stream ready");
+
+console.log(mediaStream.getTracks());
+
+if (myVideo.current) {
+    myVideo.current.srcObject = mediaStream;
+}
 
       return mediaStream
     } catch (e) {
@@ -112,6 +124,15 @@ const cleanupCall = () => {
     setCallerSignal(null)
   }
 
+  useEffect(() => {
+  if (callStarted && myVideo.current && localStreamRef.current) {
+    console.log("Attaching local stream");
+
+    myVideo.current.srcObject = localStreamRef.current;
+
+    myVideo.current.play().catch(console.error);
+  }
+}, [callStarted]);
 
   useEffect(() => {
     if (selectedUser) getMessages(selectedUser._id)
@@ -131,17 +152,41 @@ const cleanupCall = () => {
       toast.success('Call ended')
     }
 
+    const flushPendingIceCandidates = async () => {
+      const pc = pcRef.current
+      if (!pc) return
+      if (!pc.remoteDescription) return
+
+      const queue = pendingIceCandidatesRef.current
+      if (!queue.length) return
+
+      pendingIceCandidatesRef.current = []
+      for (const cand of queue) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand))
+        } catch (e) {
+          console.warn('[WebRTC] addIceCandidate flush error', e)
+        }
+      }
+    }
+
     const handleIceCandidate = async ({ candidate }) => {
       try {
         if (!candidate) return
-        if (!pcRef.current) return
-        // Ignore ICE if call is already ended
-        if (!activeCallIdRef.current) return
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+        const pc = pcRef.current
+
+        // Buffer until PC exists and remoteDescription is set.
+        if (!pc || !pc.remoteDescription) {
+          pendingIceCandidatesRef.current.push(candidate)
+          return
+        }
+
+        await pc.addIceCandidate(new RTCIceCandidate(candidate))
       } catch (err) {
         console.log('ICE candidate error', err)
       }
     }
+
 
 
     const handleIncomingCall = ({ from, offer, callerName }) => {
@@ -151,6 +196,8 @@ const cleanupCall = () => {
       setCaller(from)
       setCallerName(senderName)
       setCallerSignal(offer)
+      activePeerIdRef.current = from
+
 
       toast.success(`Incoming call from ${senderName}..!!`)
     }
@@ -166,8 +213,13 @@ const cleanupCall = () => {
         return
       }
 
-      // StrictMode-safe: ignore if call already ended/changed
-      if (!activeCallIdRef.current) return
+      // StrictMode-safe: ignore if call already ended/changed.
+      // If we haven't set activeCallIdRef yet (first accept after incoming-call),
+      // allow it to proceed.
+      if (activeCallIdRef.current === null) {
+        activeCallIdRef.current = `${socket.id}`
+      }
+
 
       setCallAccepted(true)
       setCallStarted(true)
@@ -175,9 +227,12 @@ const cleanupCall = () => {
 
       try {
         await pcRef.current.setRemoteDescription(answer)
+        // flush ICE candidates that may have arrived before remoteDescription
+        await flushPendingIceCandidates()
       } catch (e) {
         console.warn('Failed to set remote description from buffered answer', e)
       }
+
 
     }
 
@@ -286,22 +341,29 @@ const cleanupCall = () => {
     }
 
     pc.ontrack = (event) => {
-      console.log("[WebRTC] caller pc.ontrack:", {
+      const [nextRemoteStream] = event.streams
+      console.log('[WebRTC][caller] ontrack', {
         kind: event.track?.kind,
-        readyState: event.track?.readyState,
-        id: event.track?.id,
-        streams: event.streams?.length,
-        connectionState: pc.connectionState,
-        iceConnectionState: pc.iceConnectionState,
+        remoteStreamExists: !!nextRemoteStream,
+        streamsLen: event.streams?.length,
         trackEnabled: event.track?.enabled,
+        pcState: pc.connectionState,
+        iceState: pc.iceConnectionState,
       })
 
-      const [nextRemoteStream] = event.streams
-      console.log("[WebRTC] caller ontrack streams[0] exists:", !!nextRemoteStream)
-      if (nextRemoteStream) {
-        setRemoteStream(nextRemoteStream)
-      }
+     if (nextRemoteStream) {
+    remoteStreamRef.current = nextRemoteStream;
+
+    setRemoteStream(nextRemoteStream);
+
+    if (userVideo.current) {
+        userVideo.current.srcObject = nextRemoteStream;
+
+        userVideo.current.play().catch(console.error);
     }
+}
+    }
+
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
 
@@ -342,7 +404,8 @@ const cleanupCall = () => {
   const declineCall = () => {
     try {
       if (socket) {
-        const target = caller || selectedUser?._id
+    const target = activePeerIdRef.current || caller || selectedUser?._id
+
         if (target) socket.emit('end-call', { to: target })
       }
     } catch {}
@@ -350,6 +413,7 @@ const cleanupCall = () => {
     cleanupCall()
     toast.success('Call declined')
   }
+
 
   const answerCall = async () => {
     if (!socket)
@@ -379,16 +443,10 @@ const cleanupCall = () => {
 
 
     const pc = await createPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        // placeholder TURN; you should replace with your own TURN for production
-        {
-          urls: 'turn:YOUR_TURN_HOST:3478',
-          username: 'YOUR_TURN_USER',
-          credential: 'YOUR_TURN_PASS',
-        },
-      ],
+      // Keep it production-safe: default to STUN. Add TURN via real config/env in your deployment.
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     })
+
 
     pc.onconnectionstatechange = () => {
       console.log('[WebRTC] callee connectionState:', pc.connectionState)
@@ -414,9 +472,22 @@ const cleanupCall = () => {
     }
 
     pc.ontrack = (event) => {
-      const [nextRemoteStream] = event.streams
-      if (nextRemoteStream) setRemoteStream(nextRemoteStream)
-    }
+  console.log("Receiver got remote stream");
+
+  const stream = event.streams[0];
+
+  if (!stream) return;
+
+  remoteStreamRef.current = stream;
+
+  setRemoteStream(stream);
+
+  if (userVideo.current) {
+    userVideo.current.srcObject = stream;
+
+    userVideo.current.play().catch(console.error);
+  }
+}
 
     currentStream.getTracks().forEach((track) => pc.addTrack(track, currentStream))
 
