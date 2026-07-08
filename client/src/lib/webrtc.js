@@ -1,44 +1,80 @@
-export const createPeerConnection = async ({ iceServers }) => {
+// src/lib/webrtc.js
+
+/**
+ * Creates a native RTCPeerConnection.
+ * Intentionally SYNCHRONOUS — RTCPeerConnection constructor is not async.
+ * Making it async caused a timing gap where ontrack/onicecandidate
+ * could be set up too late.
+ */
+export const createPeerConnection = (config = {}) => {
+  const iceServers = config.iceServers || [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // Free TURN servers for cross-network calls (replace with your own in prod)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ]
+
   const pc = new RTCPeerConnection({
-    iceServers: iceServers || [{ urls: "stun:stun.l.google.com:19302" }],
-  });
+    iceServers,
+    iceCandidatePoolSize: 10,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
+  })
 
-  // Help codec compatibility by preferring VP8 once transceivers exist.
-  // Transceivers are not guaranteed immediately after pc creation, so we apply
-  // preferences lazily and idempotently.
-  const applyVideoCodecPreferences = () => {
-    try {
-      const transceivers = pc.getTransceivers?.() || [];
-      const capabilities = RTCRtpSender.getCapabilities?.("video");
-      if (!capabilities) return;
+  return pc
+}
 
-      const vp8Codec = capabilities.codecs?.find(
-        (c) => c.mimeType === "video/VP8"
-      );
-      if (!vp8Codec) return;
+/**
+ * Safely attaches a MediaStream to a <video> HTMLElement.
+ * Handles duplicate assignment, unmounted refs, and autoplay policy.
+ *
+ * @param {React.RefObject|HTMLVideoElement} target - ref or direct element
+ * @param {MediaStream|null} stream
+ * @param {{ muted?: boolean }} options
+ */
+export const attachStreamToVideo = async (target, stream, { muted = false } = {}) => {
+  // Accept both a React ref and a raw element
+  const el = target?.current ?? target
 
-      transceivers.forEach((transceiver) => {
-        if (
-          transceiver?.sender?.track?.kind === "video" &&
-          transceiver.setCodecPreferences
-        ) {
-          transceiver.setCodecPreferences([vp8Codec]);
-        }
-      });
-    } catch {}
-  };
+  if (!el) return
 
-  // Apply right away, and again shortly after setup.
-  applyVideoCodecPreferences();
-  setTimeout(applyVideoCodecPreferences, 0);
+  if (!stream) {
+    el.srcObject = null
+    return
+  }
 
-  return pc;
-};
+  // Avoid reassigning the same stream — causes black flash
+  if (el.srcObject === stream) {
+    if (el.paused) {
+      try { await el.play() } catch {}
+    }
+    return
+  }
 
-export const setVideoStream = (videoEl, stream) => {
-  if (!videoEl) return;
-  videoEl.srcObject = stream;
-};
+  el.srcObject = stream
+  el.muted = muted
 
-
-
+  try {
+    await el.play()
+  } catch (err) {
+    // AbortError is fine — browser will play on next user gesture
+    if (err.name !== 'AbortError') {
+      console.warn('[attachStreamToVideo] play() error:', err.name, err.message)
+    }
+  }
+}
