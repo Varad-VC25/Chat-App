@@ -25,7 +25,20 @@ const ICE_SERVERS = [
   // ✅ Cloudflare STUN
   { urls: 'stun:stun.cloudflare.com:3478' },
 
-  // ✅ TURN option 1 — openrelay (all ports)
+  // ✅ Twilio STUN
+  { urls: 'stun:global.stun.twilio.com:3478' },
+
+  // ✅ TURN — freestun
+  {
+    urls: [
+      'turn:freestun.net:3478',
+      'turns:freestun.net:5349',
+    ],
+    username: 'free',
+    credential: 'free',
+  },
+
+  // ✅ TURN — openrelay
   {
     urls: [
       'turn:openrelay.metered.ca:80',
@@ -37,14 +50,23 @@ const ICE_SERVERS = [
     credential: 'openrelayproject',
   },
 
-  // ✅ TURN option 2 — freestun backup
+  // ✅ TURN — numb.viagenie
+  {
+    urls: 'turn:numb.viagenie.ca',
+    username: 'webrtc@live.com',
+    credential: 'muazkh',
+  },
+
+  // ✅ TURN — relay.metered.ca
   {
     urls: [
-      'turn:freestun.net:3478',
-      'turns:freestun.net:5349',
+      'turn:relay.metered.ca:80',
+      'turn:relay.metered.ca:80?transport=tcp',
+      'turns:relay.metered.ca:443',
+      'turns:relay.metered.ca:443?transport=tcp',
     ],
-    username: 'free',
-    credential: 'free',
+    username: 'e8dd65f92a544de596c8c0d3',
+    credential: 'uWUPJkZLkiMsmMDt',
   },
 ]
 
@@ -88,14 +110,11 @@ const safeAttach = (videoRef, getStream, options = {}, maxMs = 5000) => {
     const el = videoRef?.current
     const stream = typeof getStream === 'function' ? getStream() : getStream
 
-    console.log('[safeAttach] el:', el ? 'EXISTS' : 'NULL', '| stream:', stream ? 'EXISTS' : 'NULL')
-
     if (!el || !stream) {
       timer = setTimeout(attempt, 100)
       return
     }
 
-    console.log('[safeAttach] ✅ Attaching stream to video element')
     await attachStreamToVideo(videoRef, stream, options)
   }
 
@@ -242,6 +261,9 @@ const ChatContainer = ({
   const prevSelectedUserIdRef = useRef(null)
   const cancelLocalAttachRef = useRef(null)
   const cancelRemoteAttachRef = useRef(null)
+  // ✅ Track ICE restart attempts
+  const iceRestartAttemptsRef = useRef(0)
+  const iceRestartTimerRef = useRef(null)
 
   // ── State ─────────────────────────────────────────────────────────────────
   const [input, setInput] = useState('')
@@ -273,35 +295,27 @@ const ChatContainer = ({
   // MEDIA
   // ══════════════════════════════════════════════════════════════════════════
   const getLocalStream = useCallback(async () => {
-    console.log('[getLocalStream] Starting...')
-
     if (localStreamRef.current) {
       const tracks = localStreamRef.current.getTracks()
       if (tracks.length > 0 && tracks.every((t) => t.readyState === 'live')) {
-        console.log('[getLocalStream] ✅ Reusing existing live stream')
         tracks.forEach((t) => (t.enabled = true))
         return localStreamRef.current
       }
-      console.log('[getLocalStream] Dead stream, stopping tracks')
       tracks.forEach((t) => t.stop())
       localStreamRef.current = null
     }
 
     try {
-      console.log('[getLocalStream] Trying HD constraints...')
       const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS)
       localStreamRef.current = stream
-      console.log('[getLocalStream] ✅ HD stream got:', stream.getTracks().map(t => t.kind))
       return stream
     } catch (e) {
       console.warn('[getLocalStream] HD failed:', e.message)
     }
 
     try {
-      console.log('[getLocalStream] Trying SD fallback...')
       const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS_FALLBACK)
       localStreamRef.current = stream
-      console.log('[getLocalStream] ✅ SD stream got:', stream.getTracks().map(t => t.kind))
       toast('Using lower quality video', { icon: '📹' })
       return stream
     } catch (e) {
@@ -309,17 +323,15 @@ const ChatContainer = ({
     }
 
     try {
-      console.log('[getLocalStream] Trying audio only...')
       const stream = await navigator.mediaDevices.getUserMedia({
         video: false,
         audio: MEDIA_CONSTRAINTS.audio,
       })
       localStreamRef.current = stream
-      console.log('[getLocalStream] ✅ Audio only stream got')
       toast('No camera — audio only call', { icon: '🎤' })
       return stream
     } catch (e) {
-      console.error('[getLocalStream] ❌ ALL FAILED:', e.message)
+      console.error('[getLocalStream] ALL FAILED:', e.message)
       toast.error('Camera/Microphone permission denied')
       return null
     }
@@ -327,16 +339,22 @@ const ChatContainer = ({
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanupCall = useCallback(() => {
-    console.log('[cleanupCall] Cleaning up...')
-
+    // Cancel timers
     cancelLocalAttachRef.current?.()
     cancelRemoteAttachRef.current?.()
     cancelLocalAttachRef.current = null
     cancelRemoteAttachRef.current = null
+    if (iceRestartTimerRef.current) {
+      clearTimeout(iceRestartTimerRef.current)
+      iceRestartTimerRef.current = null
+    }
+    iceRestartAttemptsRef.current = 0
 
+    // Stop tracks
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
     localStreamRef.current = null
 
+    // Close PC
     if (pcRef.current) {
       const pc = pcRef.current
       pc.ontrack = null
@@ -348,9 +366,11 @@ const ChatContainer = ({
       pcRef.current = null
     }
 
+    // Clear video
     if (myVideo?.current) myVideo.current.srcObject = null
     if (userVideo?.current) userVideo.current.srcObject = null
 
+    // Reset refs
     pendingIceCandidatesRef.current = []
     pendingAnswerRef.current = null
     activePeerIdRef.current = null
@@ -368,7 +388,7 @@ const ChatContainer = ({
     const pc = pcRef.current
     if (!pc || !pc.remoteDescription) return
     const queue = pendingIceCandidatesRef.current.splice(0)
-    console.log('[flushICE] Flushing', queue.length, 'buffered ICE candidates')
+    console.log('[flushICE] Flushing', queue.length, 'candidates')
     for (const c of queue) {
       try { await pc.addIceCandidate(new RTCIceCandidate(c)) } catch {}
     }
@@ -377,12 +397,10 @@ const ChatContainer = ({
   // ── Build PC ──────────────────────────────────────────────────────────────
   const buildPeerConnection = useCallback(
     (targetPeerId) => {
-      console.log('[buildPC] Building peer connection for:', targetPeerId)
       const pc = createPeerConnection({ iceServers: ICE_SERVERS })
 
       pc.onicecandidate = ({ candidate }) => {
         if (!candidate || !socket) return
-        console.log('[PC] Sending ICE candidate to:', targetPeerId)
         socket.emit('ice-candidate', {
           to: targetPeerId,
           from: authUser._id,
@@ -391,82 +409,86 @@ const ChatContainer = ({
       }
 
       pc.ontrack = ({ streams, track }) => {
-        console.log('=== ONTRACK FIRED ===')
-        console.log('[ontrack] kind:', track.kind)
-        console.log('[ontrack] readyState:', track.readyState)
-        console.log('[ontrack] streams count:', streams?.length)
-        console.log('[ontrack] userVideo.current:', userVideo?.current ? 'EXISTS' : 'NULL')
-
+        console.log('[ontrack]', track.kind, track.readyState)
         const stream = streams?.[0]
-        if (!stream) {
-          console.warn('[ontrack] ❌ NO STREAM in event!')
-          return
-        }
+        if (!stream) return
 
         const waitForLive = (attempts = 0) => {
           if (!isMountedRef.current) return
-
           const tracks = stream.getTracks()
           const hasLive = tracks.length > 0 && tracks.some((t) => t.readyState === 'live')
-          console.log(`[ontrack] attempt ${attempts} | tracks: ${tracks.length} | hasLive: ${hasLive}`)
 
           if (hasLive || attempts >= 30) {
-            console.log('[ontrack] ✅ Setting remote stream and attaching...')
             if (isMountedRef.current) setRemoteStream(stream)
-
             cancelRemoteAttachRef.current?.()
             cancelRemoteAttachRef.current = safeAttach(
-              userVideo,
-              stream,
-              { muted: false },
-              8000
+              userVideo, stream, { muted: false }, 8000
             )
           } else {
             setTimeout(() => waitForLive(attempts + 1), 100)
           }
         }
-
         waitForLive()
       }
 
-pc.onconnectionstatechange = () => {
-  const state = pc.connectionState
-  console.log('[PC] connectionState:', state)
+      // ✅ Robust connection state handler with multiple restart attempts
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState
+        console.log('[PC] connectionState:', state)
 
-  if (state === 'connected') {
-    console.log('[PC] ✅ CONNECTED!')
-  }
-
-  if (state === 'failed') {
-    console.warn('[PC] ❌ FAILED — restarting ICE')
-    try {
-      // ✅ Try ICE restart first before giving up
-      pc.restartIce()
-      toast('Reconnecting...', { icon: '🔄' })
-
-      // ✅ Wait 8 seconds before giving up completely
-      setTimeout(() => {
-        if (pcRef.current?.connectionState === 'failed') {
-          toast.error('Call connection failed')
-          cleanupCall()
+        if (state === 'connected') {
+          console.log('[PC] ✅ CONNECTED!')
+          // Reset restart attempts on success
+          iceRestartAttemptsRef.current = 0
+          if (iceRestartTimerRef.current) {
+            clearTimeout(iceRestartTimerRef.current)
+            iceRestartTimerRef.current = null
+          }
         }
-      }, 8000)
-    } catch {
-      toast.error('Call connection failed')
-      cleanupCall()
-    }
-  }
 
-  if (state === 'disconnected') {
-    // ✅ Wait longer before giving up — network hiccup
-    setTimeout(() => {
-      if (pcRef.current?.connectionState === 'disconnected') {
-        toast.error('Call disconnected')
-        cleanupCall()
+        if (state === 'failed') {
+          console.warn('[PC] ❌ FAILED')
+          // ✅ Try up to 3 ICE restarts before giving up
+          if (iceRestartAttemptsRef.current < 3) {
+            iceRestartAttemptsRef.current += 1
+            console.log(`[PC] ICE restart attempt ${iceRestartAttemptsRef.current}/3`)
+            toast(`Reconnecting... (${iceRestartAttemptsRef.current}/3)`, { icon: '🔄' })
+            try {
+              pc.restartIce()
+            } catch (e) {
+              console.warn('[PC] restartIce failed:', e.message)
+            }
+            // Check again after 10s
+            iceRestartTimerRef.current = setTimeout(() => {
+              if (pcRef.current?.connectionState === 'failed') {
+                console.log('[PC] Still failed — trying next restart')
+                pc.onconnectionstatechange?.()
+              }
+            }, 10000)
+          } else {
+            console.log('[PC] Max restarts reached — giving up')
+            toast.error('Call failed — please try again')
+            cleanupCall()
+          }
+        }
+
+        if (state === 'disconnected') {
+          console.log('[PC] Disconnected — waiting to see if it recovers...')
+          iceRestartTimerRef.current = setTimeout(() => {
+            const currentState = pcRef.current?.connectionState
+            if (currentState === 'disconnected' || currentState === 'failed') {
+              console.log('[PC] Did not recover from disconnected')
+              toast.error('Call disconnected')
+              cleanupCall()
+            }
+          }, 10000)
+        }
+
+        if (state === 'closed') {
+          console.log('[PC] Connection closed')
+        }
       }
-    }, 8000) // increased from 5000 to 8000
-  }
-}
+
       pc.oniceconnectionstatechange = () => {
         console.log('[PC] iceConnectionState:', pc.iceConnectionState)
         if (pc.iceConnectionState === 'failed') {
@@ -489,17 +511,13 @@ pc.onconnectionstatechange = () => {
 
   const startCall = useCallback(
     async (targetUserId) => {
-      console.log('=== START CALL ===')
-      console.log('[startCall] target:', targetUserId)
-      console.log('[startCall] socket connected:', socket?.connected)
-
+      console.log('[startCall] Starting to:', targetUserId)
       if (!socket?.connected) return toast.error('Not connected to server')
       if (callStarted) return
       if (!selectedUser?._id) return toast.error('No user selected')
       if (!authUser?._id) return toast.error('Not authenticated')
 
       const stream = await getLocalStream()
-      console.log('[startCall] stream:', stream ? `✅ ${stream.getTracks().length} tracks` : '❌ NULL')
       if (!stream) return
 
       if (pcRef.current) { try { pcRef.current.close() } catch {} pcRef.current = null }
@@ -507,32 +525,22 @@ pc.onconnectionstatechange = () => {
       const pc = buildPeerConnection(targetUserId)
       pcRef.current = pc
       activePeerIdRef.current = targetUserId
+      iceRestartAttemptsRef.current = 0
 
-      stream.getTracks().forEach((track) => {
-        console.log('[startCall] Adding track:', track.kind, track.readyState)
-        pc.addTrack(track, stream)
-      })
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream))
 
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: true,
       })
       await pc.setLocalDescription(offer)
-      console.log('[startCall] ✅ Local description set')
 
       setCallState({ callStarted: true, callAccepted: false, receivingCall: false })
-      setCallerInfo({
-        caller: targetUserId,
-        callerName: selectedUser.fullName,
-        callerSignal: null,
-      })
+      setCallerInfo({ caller: targetUserId, callerName: selectedUser.fullName, callerSignal: null })
 
       cancelLocalAttachRef.current?.()
       cancelLocalAttachRef.current = safeAttach(
-        myVideo,
-        () => localStreamRef.current,
-        { muted: true },
-        5000
+        myVideo, () => localStreamRef.current, { muted: true }, 5000
       )
 
       socket.emit('call-user', {
@@ -541,7 +549,6 @@ pc.onconnectionstatechange = () => {
         callerName: authUser.fullName,
         offer: pc.localDescription,
       })
-      console.log('[startCall] ✅ Offer emitted to peer')
 
       if (pendingAnswerRef.current) {
         const buffered = pendingAnswerRef.current
@@ -549,89 +556,61 @@ pc.onconnectionstatechange = () => {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(buffered))
           await flushPendingIceCandidates()
-          console.log('[startCall] ✅ Buffered answer applied')
         } catch (e) {
-          console.warn('[startCall] Failed to apply buffered answer:', e.message)
+          console.warn('[startCall] Buffered answer failed:', e.message)
         }
       }
     },
-    [
-      socket, callStarted, selectedUser, authUser,
-      getLocalStream, buildPeerConnection, flushPendingIceCandidates,
-      setCallState, setCallerInfo, myVideo,
-    ]
+    [socket, callStarted, selectedUser, authUser, getLocalStream,
+     buildPeerConnection, flushPendingIceCandidates, setCallState, setCallerInfo, myVideo]
   )
 
   const answerCall = useCallback(async () => {
-    console.log('=== ANSWER CALL ===')
-    console.log('[answerCall] caller:', caller)
-    console.log('[answerCall] callerSignal:', callerSignal ? '✅ EXISTS' : '❌ NULL')
-    console.log('[answerCall] socket connected:', socket?.connected)
-    console.log('[answerCall] isAnswering:', isAnsweringRef.current)
-
+    console.log('[answerCall] Answering from:', caller)
     if (!socket?.connected) return toast.error('Not connected to server')
     if (!caller) return toast.error('Caller ID missing')
     if (!callerSignal) return toast.error('Offer not received yet')
     if (isAnsweringRef.current) return
     isAnsweringRef.current = true
 
-    console.log('[answerCall] Getting local stream...')
     const stream = await getLocalStream()
-    console.log('[answerCall] stream:', stream ? `✅ ${stream.getTracks().map(t => t.kind)}` : '❌ NULL')
-
     if (!stream) { isAnsweringRef.current = false; return }
 
     if (pcRef.current) { try { pcRef.current.close() } catch {} pcRef.current = null }
 
     const pc = buildPeerConnection(caller)
     pcRef.current = pc
+    iceRestartAttemptsRef.current = 0
 
-    stream.getTracks().forEach((track) => {
-      console.log('[answerCall] Adding track:', track.kind, track.readyState)
-      pc.addTrack(track, stream)
-    })
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream))
 
     try {
-      console.log('[answerCall] Setting remote description...')
       await pc.setRemoteDescription(new RTCSessionDescription(callerSignal))
-      console.log('[answerCall] ✅ Remote description set')
     } catch (e) {
-      console.error('[answerCall] ❌ setRemoteDescription FAILED:', e.message)
+      console.error('[answerCall] setRemoteDescription FAILED:', e.message)
       isAnsweringRef.current = false
       return
     }
 
     await flushPendingIceCandidates()
-    console.log('[answerCall] ✅ ICE candidates flushed')
 
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-    console.log('[answerCall] ✅ Local description (answer) set')
 
-    // ✅ Render VideoCall FIRST
+    // ✅ State first — renders VideoCall
     setCallState({ callStarted: true, callAccepted: true, receivingCall: false })
-    console.log('[answerCall] ✅ Call state updated — VideoCall should render now')
 
     socket.emit('answer-call', { to: caller, answer: pc.localDescription })
-    console.log('[answerCall] ✅ Answer emitted to caller')
 
-    // ✅ Poll until myVideo.current is available after render
-    console.log('[answerCall] myVideo.current RIGHT NOW:', myVideo?.current ? 'EXISTS' : 'NULL')
+    // ✅ Then attach local stream after VideoCall renders
     cancelLocalAttachRef.current?.()
     cancelLocalAttachRef.current = safeAttach(
-      myVideo,
-      () => localStreamRef.current,
-      { muted: true },
-      5000
+      myVideo, () => localStreamRef.current, { muted: true }, 5000
     )
-    console.log('[answerCall] ✅ safeAttach started for local video')
-  }, [
-    socket, caller, callerSignal, getLocalStream,
-    buildPeerConnection, flushPendingIceCandidates, setCallState, myVideo,
-  ])
+  }, [socket, caller, callerSignal, getLocalStream,
+      buildPeerConnection, flushPendingIceCandidates, setCallState, myVideo])
 
   const endCall = useCallback(() => {
-    console.log('[endCall] Ending call')
     if (socket?.connected) {
       const target = activePeerIdRef.current || caller || selectedUser?._id
       if (target) socket.emit('end-call', { to: target })
@@ -640,7 +619,6 @@ pc.onconnectionstatechange = () => {
   }, [socket, caller, selectedUser, cleanupCall])
 
   const declineCall = useCallback(() => {
-    console.log('[declineCall] Declining call')
     if (socket?.connected) {
       const target = activePeerIdRef.current || caller || selectedUser?._id
       if (target) socket.emit('end-call', { to: target })
@@ -653,36 +631,26 @@ pc.onconnectionstatechange = () => {
     registerCallHandlers({ endCall, answerCall, declineCall })
   }, [registerCallHandlers, endCall, answerCall, declineCall])
 
-  // ── Local stream attach effect ─────────────────────────────────────────────
+  // ── Local stream effect ───────────────────────────────────────────────────
   useEffect(() => {
     if (!callStarted && !receivingCall) return
     if (!localStreamRef.current) return
 
-    console.log('[effect] callStarted/receivingCall changed — safeAttach local stream')
     cancelLocalAttachRef.current?.()
     cancelLocalAttachRef.current = safeAttach(
-      myVideo,
-      () => localStreamRef.current,
-      { muted: true },
-      5000
+      myVideo, () => localStreamRef.current, { muted: true }, 5000
     )
-
     return () => { cancelLocalAttachRef.current?.() }
   }, [callStarted, receivingCall, myVideo])
 
-  // ── Remote stream attach effect ────────────────────────────────────────────
+  // ── Remote stream effect ──────────────────────────────────────────────────
   useEffect(() => {
     if (!remoteStream) return
 
-    console.log('[effect] remoteStream changed — safeAttach remote stream')
     cancelRemoteAttachRef.current?.()
     cancelRemoteAttachRef.current = safeAttach(
-      userVideo,
-      remoteStream,
-      { muted: false },
-      8000
+      userVideo, remoteStream, { muted: false }, 8000
     )
-
     return () => { cancelRemoteAttachRef.current?.() }
   }, [remoteStream, userVideo])
 
@@ -692,9 +660,7 @@ pc.onconnectionstatechange = () => {
 
     const onIncoming = ({ from, offer, callerName: name }) => {
       if (!isMountedRef.current) return
-      console.log('=== INCOMING CALL ===')
-      console.log('[incoming] from:', from)
-      console.log('[incoming] offer:', offer ? '✅ EXISTS' : '❌ NULL')
+      console.log('[incoming] call from:', from)
       setCallerInfo({
         caller: from,
         callerName: name?.trim() || 'Unknown',
@@ -706,20 +672,13 @@ pc.onconnectionstatechange = () => {
     }
 
     const onAccepted = async ({ answer }) => {
-      console.log('=== CALL ACCEPTED ===')
-      console.log('[accepted] answer:', answer ? '✅ EXISTS' : '❌ NULL')
-      console.log('[accepted] pcRef.current:', pcRef.current ? 'EXISTS' : 'NULL')
-
+      console.log('[accepted] answer:', answer ? 'EXISTS' : 'NULL')
       if (!answer) return
       if (!pcRef.current) {
-        console.warn('[accepted] No PC yet — buffering answer')
         pendingAnswerRef.current = answer
         return
       }
-      if (pcRef.current.remoteDescription) {
-        console.warn('[accepted] Remote description already set — skipping')
-        return
-      }
+      if (pcRef.current.remoteDescription) return
 
       try {
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
@@ -727,9 +686,8 @@ pc.onconnectionstatechange = () => {
         if (isMountedRef.current) {
           setCallState((prev) => ({ ...prev, callAccepted: true }))
         }
-        console.log('[accepted] ✅ Remote description set successfully')
       } catch (e) {
-        console.error('[accepted] ❌ Error:', e.message)
+        console.error('[accepted] Error:', e.message)
       }
     }
 
@@ -737,7 +695,6 @@ pc.onconnectionstatechange = () => {
       if (!candidate) return
       const pc = pcRef.current
       if (!pc || !pc.remoteDescription) {
-        console.log('[ICE] Buffering candidate — no PC or remote desc yet')
         pendingIceCandidatesRef.current.push(candidate)
         return
       }
@@ -751,7 +708,6 @@ pc.onconnectionstatechange = () => {
     }
 
     const onError = ({ message } = {}) => {
-      console.error('[socket] Call error:', message)
       toast.error(message || 'Call failed')
       cleanupCall()
     }
