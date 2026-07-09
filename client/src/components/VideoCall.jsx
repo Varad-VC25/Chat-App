@@ -1,5 +1,6 @@
 // src/components/VideoCall.jsx
-import React, { useEffect, useRef, useCallback } from 'react'
+import React, { useEffect, useRef, useCallback, useContext } from 'react'
+import { AuthContext } from '../../context/AuthContext'
 
 const VideoCall = ({
   myVideo,
@@ -9,96 +10,59 @@ const VideoCall = ({
   endCall,
   callerName,
 }) => {
+  const { authUser } = useContext(AuthContext)
+
   const localPlayAttempts = useRef(0)
   const remotePlayAttempts = useRef(0)
   const localRetryTimer = useRef(null)
   const remoteRetryTimer = useRef(null)
   const isMounted = useRef(true)
 
-  // ── Universal play helper ───────────────────────────────────────────────
-  // Handles autoplay policy on all browsers/devices:
-  // - Chrome desktop: needs user gesture or muted autoplay
-  // - Safari iOS: needs playsInline + muted for local, gesture for remote
-  // - Firefox: needs explicit play() call
-  // - Android Chrome: needs playsInline
+  // ── Universal play helper ─────────────────────────────────────────────
   const tryPlay = useCallback(async (ref, label, maxAttempts = 15) => {
     if (!isMounted.current) return
-
     const el = ref?.current
-    if (!el) return
-
-    const stream = el.srcObject
-    if (!stream) return
-
-    // Check stream has at least one live track
-    const tracks = stream.getTracks?.() ?? []
-    if (!tracks.length) return
-
-    const hasLiveTrack = tracks.some((t) => t.readyState === 'live')
-    if (!hasLiveTrack) return
-
-    // Already playing — nothing to do
+    if (!el?.srcObject) return
+    const tracks = el.srcObject.getTracks?.() ?? []
+    if (!tracks.some((t) => t.readyState === 'live')) return
     if (!el.paused) return
 
     try {
       await el.play()
-      console.log(`[VideoCall] ${label} playing ✓`)
     } catch (err) {
       if (err.name === 'AbortError') {
-        // Previous play() was interrupted — retry after a short delay
-        const attempts =
-          label === 'local' ? localPlayAttempts : remotePlayAttempts
-        const timer =
-          label === 'local' ? localRetryTimer : remoteRetryTimer
-
+        const attempts = label === 'local' ? localPlayAttempts : remotePlayAttempts
+        const timer = label === 'local' ? localRetryTimer : remoteRetryTimer
         if (attempts.current < maxAttempts) {
           attempts.current += 1
-          timer.current = setTimeout(() => {
-            tryPlay(ref, label, maxAttempts)
-          }, 300)
+          timer.current = setTimeout(() => tryPlay(ref, label, maxAttempts), 300)
         }
-      } else if (err.name === 'NotAllowedError') {
-        // Autoplay blocked — will play on next user interaction
-        console.warn(`[VideoCall] ${label} autoplay blocked — waiting for gesture`)
-      } else {
-        console.warn(`[VideoCall] ${label} play() error:`, err.name, err.message)
       }
     }
   }, [])
 
-  // ── Retry play on any call state change ────────────────────────────────
   useEffect(() => {
     if (!isMounted.current) return
-
-    // Reset attempt counters on state change
     localPlayAttempts.current = 0
     remotePlayAttempts.current = 0
 
-    // Staggered attempts — gives DOM time to mount video elements
-    // and browser time to attach srcObject before calling play()
-    const t1 = setTimeout(() => tryPlay(myVideo, 'local'), 100)
-    const t2 = setTimeout(() => tryPlay(myVideo, 'local'), 500)
-    const t3 = setTimeout(() => tryPlay(myVideo, 'local'), 1000)
+    const timers = [
+      setTimeout(() => tryPlay(myVideo, 'local'), 100),
+      setTimeout(() => tryPlay(myVideo, 'local'), 500),
+      setTimeout(() => tryPlay(myVideo, 'local'), 1000),
+      setTimeout(() => tryPlay(userVideo, 'remote'), 200),
+      setTimeout(() => tryPlay(userVideo, 'remote'), 600),
+      setTimeout(() => tryPlay(userVideo, 'remote'), 1200),
+    ]
 
-    const t4 = setTimeout(() => tryPlay(userVideo, 'remote'), 200)
-    const t5 = setTimeout(() => tryPlay(userVideo, 'remote'), 600)
-    const t6 = setTimeout(() => tryPlay(userVideo, 'remote'), 1200)
-
-    return () => {
-      ;[t1, t2, t3, t4, t5, t6].forEach(clearTimeout)
-    }
+    return () => timers.forEach(clearTimeout)
   }, [callAccepted, hasRemoteStream, myVideo, userVideo, tryPlay])
 
-  // ── Handle user gesture to unblock autoplay ────────────────────────────
-  // On iOS Safari and some Android browsers, video.play() throws
-  // NotAllowedError until a user gesture has been made.
-  // Tapping anywhere on the call screen counts as a gesture.
   const handleScreenTap = useCallback(() => {
     tryPlay(myVideo, 'local')
     tryPlay(userVideo, 'remote')
   }, [myVideo, userVideo, tryPlay])
 
-  // ── Cleanup timers on unmount ───────────────────────────────────────────
   useEffect(() => {
     isMounted.current = true
     return () => {
@@ -108,152 +72,125 @@ const VideoCall = ({
     }
   }, [])
 
+  const myName = authUser?.fullName || 'You'
+  const remoteName = callerName || 'Remote User'
+
   return (
-    /*
-      Full screen overlay.
-      onClick = unblocks autoplay on first tap (iOS Safari / Android)
-    */
     <div
-      className='absolute inset-0 z-50 flex flex-col bg-black'
+      className='fixed inset-0 z-[90] flex flex-col bg-gray-950'
       onClick={handleScreenTap}
-      style={{ touchAction: 'manipulation' }} // Prevent 300ms tap delay on mobile
+      style={{ touchAction: 'manipulation' }}
     >
+      {/* ── Top bar with call status ─────────────────────────────────── */}
+      <div className='flex-shrink-0 py-3 px-4 bg-black/40 backdrop-blur-sm border-b border-white/10'>
+        <p className='text-white text-center text-sm font-medium'>
+          {callAccepted ? '🟢 Connected' : `📞 Calling ${remoteName}...`}
+        </p>
+      </div>
 
-      {/* ── Remote video (full screen background) ──────────────────────── */}
-      {/*
-        Always rendered — never conditionally mounted.
-        Conditional mounting causes ref to be null when stream arrives,
-        resulting in black screen. We show/hide with opacity instead.
-      */}
-      <div className='relative w-full h-full'>
+      {/* ── Video boxes container ─────────────────────────────────────── */}
+      <div className='flex-1 flex items-center justify-center p-4 overflow-hidden'>
+        <div className='w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 gap-4 h-full max-h-[70vh]'>
 
-        {/* Remote video — full screen */}
-        <video
-          ref={userVideo}
-          autoPlay
-          playsInline       // Required on iOS — without this video never plays
-          // NO muted — remote audio must be heard
-          className={`
-            w-full h-full object-cover
-            transition-opacity duration-500
-            ${hasRemoteStream && callAccepted ? 'opacity-100' : 'opacity-0'}
-          `}
-          style={{
-            // Force hardware acceleration — prevents black screen on some Android
-            transform: 'translateZ(0)',
-            WebkitTransform: 'translateZ(0)',
-            // Prevent iOS from going fullscreen on double-tap
-            WebkitUserSelect: 'none',
-          }}
-          // Fallback: if autoPlay doesn't trigger, play on loadedmetadata
-          onLoadedMetadata={(e) => {
-            e.target.play().catch(() => {})
-          }}
-          onCanPlay={(e) => {
-            if (e.target.paused) e.target.play().catch(() => {})
-          }}
-        />
+          {/* ── LOCAL VIDEO BOX (You) ────────────────────────────────── */}
+          <div className='relative rounded-2xl overflow-hidden bg-gray-900 border-2 border-violet-500/50 shadow-2xl flex items-center justify-center'>
+            <video
+              ref={myVideo}
+              autoPlay
+              playsInline
+              muted
+              className='w-full h-full object-cover'
+              style={{
+                transform: 'scaleX(-1)',
+                WebkitTransform: 'scaleX(-1)',
+                maxHeight: '100%',
+              }}
+              onLoadedMetadata={(e) => e.target.play().catch(() => {})}
+              onCanPlay={(e) => { if (e.target.paused) e.target.play().catch(() => {}) }}
+            />
 
-        {/* Waiting placeholder — shown while remote stream loads */}
-        {(!hasRemoteStream || !callAccepted) && (
-          <div className='absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gray-900'>
-            <div className='w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center'>
-              <span className='text-5xl'>👤</span>
+            <div className='absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1.5'>
+              <span className='w-2 h-2 bg-violet-400 rounded-full' />
+              <p className='text-white text-xs font-medium'>{myName} (You)</p>
             </div>
-            <p className='text-white text-base font-medium'>
-              {callAccepted
-                ? 'Connecting video...'
-                : `Calling ${callerName || 'user'}...`}
-            </p>
-            {/* Animated dots */}
-            <div className='flex gap-2'>
-              {[0, 1, 2].map((i) => (
-                <span
-                  key={i}
-                  className='w-2.5 h-2.5 bg-green-400 rounded-full animate-bounce'
-                  style={{ animationDelay: `${i * 0.2}s` }}
-                />
-              ))}
+
+            <div className='absolute top-3 right-3 bg-black/40 backdrop-blur-sm px-2 py-1 rounded-full'>
+              <span className='text-xs'>📹</span>
             </div>
-            <p className='text-gray-500 text-xs mt-2'>
-              Tap screen if video doesn't start
-            </p>
           </div>
-        )}
 
-        {/* Remote user name label */}
-        {hasRemoteStream && callAccepted && (
-          <div className='absolute top-4 left-4 bg-black/40 backdrop-blur-sm px-3 py-1 rounded-full'>
-            <p className='text-white text-xs font-medium'>
-              {callerName || 'Remote User'}
-            </p>
-          </div>
-        )}
+          {/* ── REMOTE VIDEO BOX (Other user) ────────────────────────── */}
+          <div className='relative rounded-2xl overflow-hidden bg-gray-900 border-2 border-green-500/50 shadow-2xl flex items-center justify-center'>
+            <video
+              ref={userVideo}
+              autoPlay
+              playsInline
+              className={`w-full h-full object-cover transition-opacity duration-500 ${
+                hasRemoteStream && callAccepted ? 'opacity-100' : 'opacity-0'
+              }`}
+              style={{
+                transform: 'translateZ(0)',
+                WebkitTransform: 'translateZ(0)',
+                maxHeight: '100%',
+              }}
+              onLoadedMetadata={(e) => e.target.play().catch(() => {})}
+              onCanPlay={(e) => { if (e.target.paused) e.target.play().catch(() => {}) }}
+            />
 
-        {/* ── Local video (picture-in-picture) ─────────────────────────── */}
-        {/*
-          Always rendered — opacity trick used here too.
-          draggable=false prevents accidental drag on desktop.
-          transform: scaleX(-1) mirrors local camera (feels natural).
-        */}
-        <div
-          className='absolute bottom-24 right-3 rounded-xl overflow-hidden border-2 border-white/20 shadow-2xl bg-gray-800'
-          style={{
-            width: 'clamp(90px, 25vw, 140px)',   // Responsive: 90px min, 25% screen, 140px max
-            aspectRatio: '4/3',                   // Consistent ratio on all devices
-          }}
-        >
-          <video
-            ref={myVideo}
-            autoPlay
-            playsInline    // Required on iOS
-            muted          // Local MUST be muted — prevents audio echo
-            className='w-full h-full object-cover'
-            style={{
-              transform: 'scaleX(-1)',            // Mirror effect
-              WebkitTransform: 'scaleX(-1)',
-            }}
-            onLoadedMetadata={(e) => {
-              e.target.play().catch(() => {})
-            }}
-            onCanPlay={(e) => {
-              if (e.target.paused) e.target.play().catch(() => {})
-            }}
-          />
-          <div className='absolute bottom-1 left-0 right-0 flex justify-center'>
-            <span className='text-white text-[10px] bg-black/40 px-2 rounded-full'>
-              You
-            </span>
+            {(!hasRemoteStream || !callAccepted) && (
+              <div className='absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gray-900'>
+                <div className='w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center'>
+                  <span className='text-3xl'>👤</span>
+                </div>
+                <p className='text-white text-sm font-medium'>
+                  {callAccepted ? 'Connecting...' : 'Ringing...'}
+                </p>
+                <div className='flex gap-1'>
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className='w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce'
+                      style={{ animationDelay: `${i * 0.15}s` }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className='absolute bottom-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1.5'>
+              <span className={`w-2 h-2 rounded-full ${hasRemoteStream && callAccepted ? 'bg-green-400' : 'bg-yellow-400'}`} />
+              <p className='text-white text-xs font-medium'>{remoteName}</p>
+            </div>
+
+            {hasRemoteStream && callAccepted && (
+              <div className='absolute top-3 right-3 bg-red-500/80 px-2 py-1 rounded-full flex items-center gap-1'>
+                <span className='w-1.5 h-1.5 bg-white rounded-full animate-pulse' />
+                <span className='text-white text-[10px] font-bold'>LIVE</span>
+              </div>
+            )}
           </div>
+
         </div>
+      </div>
 
-        {/* ── Controls ─────────────────────────────────────────────────── */}
-        <div className='absolute bottom-6 left-0 right-0 flex items-center justify-center gap-6'>
-          {/* End Call */}
+      {/* ── Bottom controls ──────────────────────────────────────────── */}
+      <div className='flex-shrink-0 py-6 px-4 bg-black/40 backdrop-blur-sm border-t border-white/10'>
+        <div className='flex items-center justify-center gap-4'>
           <button
-            onClick={(e) => {
-              e.stopPropagation() // Prevent triggering handleScreenTap
-              endCall()
-            }}
-            className='flex flex-col items-center gap-1.5 group'
+            onClick={(e) => { e.stopPropagation(); endCall() }}
+            className='flex flex-col items-center gap-2 group'
             style={{ touchAction: 'manipulation' }}
           >
-            <span
-              className='
-                w-14 h-14 rounded-full
-                bg-red-500 group-hover:bg-red-600 group-active:bg-red-700
-                flex items-center justify-center
-                text-2xl shadow-lg
-                transition-all duration-200
-                active:scale-90
-              '
-            >
+            <span className='w-14 h-14 md:w-16 md:h-16 rounded-full bg-red-500 group-hover:bg-red-600 group-active:bg-red-700 active:scale-90 flex items-center justify-center text-2xl md:text-3xl shadow-xl transition-all'>
               📵
             </span>
             <span className='text-white text-xs font-medium'>End Call</span>
           </button>
         </div>
 
+        <p className='text-center text-gray-500 text-[11px] mt-3'>
+          Tap screen if video does not appear
+        </p>
       </div>
     </div>
   )
