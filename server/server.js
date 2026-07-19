@@ -19,7 +19,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://chat-app-frontend-six-ochre-11.vercel.app",
+      "https://chat-app-varad-dev.vercel.app",
     ],
     methods: ["GET", "POST", "PUT"],
     credentials: true,
@@ -30,7 +30,7 @@ export const io = new Server(server, {
   cors: {
     origin: [
       "http://localhost:5173",
-      "https://chat-app-frontend-six-ochre-11.vercel.app",
+      "https://chat-app-varad-dev.vercel.app",
     ],
     methods: ["GET", "POST", "PUT"],
     credentials: true,
